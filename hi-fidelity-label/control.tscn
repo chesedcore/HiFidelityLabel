@@ -1,0 +1,29 @@
+[gd_scene load_steps=3 format=3 uid="uid://ck2copggrcx7v"]
+
+[ext_resource type="Script" uid="uid://b5uvqwsbfbhq4" path="res://HFLabel.gd" id="1_0fbet"]
+[ext_resource type="Script" uid="uid://dooarqr1uiqjw" path="res://driver.gd" id="1_62e2m"]
+
+[node name="Master" type="Control" node_paths=PackedStringArray("hfl")]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_62e2m")
+hfl = NodePath("HiFidelityLabel")
+
+[node name="HiFidelityLabel" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 471.0
+offset_top = 264.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_0fbet")
+max_glyphs = 100
+zero_point_three = 1.0
+font_size = 30
+extra_fit = 2
