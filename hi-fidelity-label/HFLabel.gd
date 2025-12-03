@@ -173,35 +173,77 @@ func _pop_nearest(list_idx_arr: Array, target_idx: int) -> int:
 	return chosen
 
 #region LAYOUT AND ANIMATIONS (tweens)
+##DEPRECATED. don't use this version, it is not kerning aware
+#func _relayout_immediately() -> void:
+	#var x := 0.0
+	#for g in _active_glyphs:
+		#var width := _measure_char_width(g)
+		#var target := Vector2(x, baseline_y)
+		#g.pos = target
+		#g.target_pos = target
+		##ensure label shows correct char and is moved properly
+		#_set_label_text_and_pos(g.label_idx, g.repr, target)
+		#x += width + letter_spacing
+
 ##instantly place all glyphs without animation.
 func _relayout_immediately() -> void:
-	var x := 0.0
-	for g in _active_glyphs:
-		var width := _measure_char_width(g)
+	var full_text := ""
+	for g in _active_glyphs: full_text += g.repr
+	var x_positions := _compute_glyph_positions_from_string(full_text)
+	
+	for i in _active_glyphs.size():
+		var g := _active_glyphs[i]
+		var x := 0.0
+		if i == 0: x = 0.0
+		else: x = x_positions[i - 1]
+		x += i * letter_spacing
 		var target := Vector2(x, baseline_y)
 		g.pos = target
 		g.target_pos = target
-		#ensure label shows correct char and is moved properly
 		_set_label_text_and_pos(g.label_idx, g.repr, target)
-		x += width + letter_spacing
+
+
+##DEPRECATED: don't use this. it's not kerning aware
+#func _relayout_animated() -> void:
+	#var x := 0.0
+	#for g in _active_glyphs:
+		#var width := _measure_char_width(g)
+		#var target := Vector2(x, baseline_y)
+		#_set_label_text_and_pos(g.label_idx, g.repr, g.pos) #keep this visual position as a start
+		#g.stop_tween()
+		##create tween here for position movement from current to target
+		#var lbl := _label_pool[g.label_idx]
+		#var t := create_tween().set_ease(t_ease).set_trans(t_trans)
+		##animate
+		#t.tween_property(lbl, "position", target, zero_point_three)
+		#g.tween = t
+		#g.target_pos = target
+		#g.pos = target
+		#x += width + letter_spacing
 
 ##compute target positions for the new order and animate each glyph with a tween
 func _relayout_animated() -> void:
-	var x := 0.0
-	for g in _active_glyphs:
-		var width := _measure_char_width(g)
+	var full_text := ""
+	for g in _active_glyphs: full_text += g.repr
+	var x_positions := _compute_glyph_positions_from_string(full_text)
+	
+	for i in _active_glyphs.size():
+		var g := _active_glyphs[i]
+		var x := 0.0
+		if i == 0: x = 0.0
+		else: x = x_positions[i - 1]
+		#use that x as anchor
+		x += i * letter_spacing
 		var target := Vector2(x, baseline_y)
-		_set_label_text_and_pos(g.label_idx, g.repr, g.pos) #keep this visual position as a start
+		_set_label_text_and_pos(g.label_idx, g.repr, g.pos)
 		g.stop_tween()
-		#create tween here for position movement from current to target
 		var lbl := _label_pool[g.label_idx]
 		var t := create_tween().set_ease(t_ease).set_trans(t_trans)
-		#animate
 		t.tween_property(lbl, "position", target, zero_point_three)
 		g.tween = t
 		g.target_pos = target
 		g.pos = target
-		x += width + letter_spacing
+
 
 ##helper used to set label text and position immediately (used to seed animation start)
 func _set_label_text_and_pos(label_idx: int, ch: String, pos: Vector2) -> void:
@@ -213,22 +255,46 @@ func _set_label_text_and_pos(label_idx: int, ch: String, pos: Vector2) -> void:
 #endregion
 
 #region MEASUREMENT AND UTILS
-@export var extra_fit: int = 1
 ##measure glyph width accurately using the cached font if available.
 ##fallback to minimum size if font is not cached.
-func _measure_char_width(g: Glyph) -> float:
-	if _font:
-		print_rich("[color=green]Font cache found!")
-		return _font.get_string_size(g.repr+" ".repeat(extra_fit)).x
-	#fallback code
-	if _label_pool.size() > 0:
-		var tmp := _label_pool[0]
-		tmp.text = g.repr
-		#await get_tree().process_frame
-		return tmp.get_minimum_size().x
-	#absolute fallback
-	push_warning("No proper fallback found. Returning a const fallback 8.0.")
-	return 8.0
+##DEPRECATED: kerning unaware. fucks shit up bad
+#func _measure_char_width(g: Glyph) -> float:
+	#if _font:
+		#print_rich("[color=green]Font cache found!")
+		#return _font.get_string_size(g.repr).x
+	##fallback code
+	#if _label_pool.size() > 0:
+		#var tmp := _label_pool[0]
+		#tmp.text = g.repr
+		##await get_tree().process_frame
+		#return tmp.get_minimum_size().x
+	##absolute fallback
+	#push_warning("No proper fallback found. Returning a const fallback 8.0.")
+	#return 8.0
+
+##returns X positions for each glyph based on real kerning & shaping.
+##index i gives the X at which character i should be placed.
+func _compute_glyph_positions_from_string(full_text: String) -> PackedFloat32Array:
+	var result := PackedFloat32Array()
+	
+	if not _font:
+		push_error("Font cache missing. I haven't added a fallback yet lol")
+		return result
+	
+	var run := ""
+	##HACK: runs in O(n^2) time. fucking horrendous for 1000 glyphs -> 1,000,000 time units :sob:
+	##TODO: reduce to O(n) time
+	for i in full_text.length():
+		run += full_text.substr(i, 1)
+		var _size := _font.get_string_size(
+			run,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1,
+			font_size
+		)
+		result.push_back(_size.x)
+	
+	return result
 
 ##obtain current label position (used when reusing a label index as fallback)
 func _get_label_pos(label_idx: int) -> Vector2:

@@ -11,11 +11,13 @@ func morph_test() -> void:
 	await get_tree().create_timer(2).timeout
 	hfl.morph_into("but who cares")
 	await get_tree().create_timer(2).timeout
-	hfl.morph_into("this line only appears if the font is cached")
+	hfl.morph_into("i fixed the kerning and advancement")
 	await get_tree().create_timer(2).timeout
-	hfl.morph_into("fucking help me")
+	hfl.morph_into("but the algorithm is now O(n^2)")
 	await get_tree().create_timer(2).timeout
-	hfl.morph_into("please")
+	hfl.morph_into("the runtime cost shouldn't be THAT bad")
+	await get_tree().create_timer(2).timeout
+	hfl.morph_into("but i need to optimise regardless")
 
 func layout_test() -> void:
 	hfl.immediately_set_text("hello")
