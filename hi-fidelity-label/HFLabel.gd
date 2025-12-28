@@ -4,6 +4,11 @@
 ##morphing between strings. 
 class_name HiFidelityLabel extends Control
 
+#region SIGNALS
+##emitted when a morph animation completes
+signal finished_morphing
+#endregion
+
 #region CONFIGURATION
 
 ##maximum number of glyphs that this node can render. the node allocates an arena on ready up 
@@ -23,10 +28,21 @@ class_name HiFidelityLabel extends Control
 ##font size of each label.
 @export var font_size := 10
 
+##text alignment
+@export_enum("Left", "Center", "Right") var alignment: int = 1
+
 ##tween easing parameters.
 @export var t_ease: Tween.EaseType = Tween.EASE_OUT
 ##tween transition parameters.
 @export var t_trans: Tween.TransitionType = Tween.TRANS_EXPO
+
+@export_category("Multiline settings")
+##if true, attempts to render the string multilined.
+@export var multiline: bool = false
+##if zero, uses control.size.x. otherwise uses the one specified.
+@export var max_width: float = 0.0 #0 = use Control.size.x lol
+##spacing between the lines. duh.
+@export var line_spacing: float = 0.0
 
 ##cache the font to prevent asking for it on a hot path
 var _font: Font
@@ -41,6 +57,9 @@ var _free_label_indices := PackedInt32Array()
 
 ##this is the current visible string in order. each element corresponds to one character on the screen.
 var _active_glyphs: Array[Glyph] = []
+
+##track active morph tweens to know when morphing is complete
+var _active_morph_tweens: Array[Tween] = []
 #endregion
 
 #region GLYPH
@@ -173,77 +192,87 @@ func _pop_nearest(list_idx_arr: Array, target_idx: int) -> int:
 	return chosen
 
 #region LAYOUT AND ANIMATIONS (tweens)
-##DEPRECATED. don't use this version, it is not kerning aware
-#func _relayout_immediately() -> void:
-	#var x := 0.0
-	#for g in _active_glyphs:
-		#var width := _measure_char_width(g)
-		#var target := Vector2(x, baseline_y)
-		#g.pos = target
-		#g.target_pos = target
-		##ensure label shows correct char and is moved properly
-		#_set_label_text_and_pos(g.label_idx, g.repr, target)
-		#x += width + letter_spacing
+
+func _compute_singleline_targets(full_text: String) -> Array[Vector2]:
+	var targets: Array[Vector2] = []
+	var x_positions := _compute_glyph_positions_from_string(full_text)
+	
+	var total_width := 0.0
+	if x_positions.size() > 0:
+		total_width = x_positions[-1] + (x_positions.size() - 1) * letter_spacing
+	
+	var x_offset := 0.0
+	match alignment:
+		1: x_offset = (size.x - total_width) * 0.5
+		2: x_offset = size.x - total_width
+		_: x_offset = 0.0
+	
+	for i in x_positions.size():
+		var x := 0.0
+		if i > 0:
+			x = x_positions[i - 1]
+		x += i * letter_spacing + x_offset
+		targets.append(Vector2(x, 0.0))
+	
+	return targets
+
 
 ##instantly place all glyphs without animation.
 func _relayout_immediately() -> void:
 	var full_text := ""
-	for g in _active_glyphs: full_text += g.repr
-	var x_positions := _compute_glyph_positions_from_string(full_text)
+	for g in _active_glyphs:
+		full_text += g.repr
+	
+	var targets := \
+		_compute_multiline_targets(full_text) if multiline \
+		else _compute_singleline_targets(full_text)
 	
 	for i in _active_glyphs.size():
 		var g := _active_glyphs[i]
-		var x := 0.0
-		if i == 0: x = 0.0
-		else: x = x_positions[i - 1]
-		x += i * letter_spacing
-		var target := Vector2(x, baseline_y)
+		var target := targets[i] + Vector2(0.0, baseline_y)
 		g.pos = target
 		g.target_pos = target
 		_set_label_text_and_pos(g.label_idx, g.repr, target)
 
 
-##DEPRECATED: don't use this. it's not kerning aware
-#func _relayout_animated() -> void:
-	#var x := 0.0
-	#for g in _active_glyphs:
-		#var width := _measure_char_width(g)
-		#var target := Vector2(x, baseline_y)
-		#_set_label_text_and_pos(g.label_idx, g.repr, g.pos) #keep this visual position as a start
-		#g.stop_tween()
-		##create tween here for position movement from current to target
-		#var lbl := _label_pool[g.label_idx]
-		#var t := create_tween().set_ease(t_ease).set_trans(t_trans)
-		##animate
-		#t.tween_property(lbl, "position", target, zero_point_three)
-		#g.tween = t
-		#g.target_pos = target
-		#g.pos = target
-		#x += width + letter_spacing
-
 ##compute target positions for the new order and animate each glyph with a tween
 func _relayout_animated() -> void:
 	var full_text := ""
-	for g in _active_glyphs: full_text += g.repr
-	var x_positions := _compute_glyph_positions_from_string(full_text)
+	for g in _active_glyphs:
+		full_text += g.repr
 	
+	var targets := \
+		_compute_multiline_targets(full_text) if multiline \
+		else _compute_singleline_targets(full_text)
+	
+	_active_morph_tweens.clear()
+
 	for i in _active_glyphs.size():
 		var g := _active_glyphs[i]
-		var x := 0.0
-		if i == 0: x = 0.0
-		else: x = x_positions[i - 1]
-		#use that x as anchor
-		x += i * letter_spacing
-		var target := Vector2(x, baseline_y)
+		var target := targets[i] + Vector2(0.0, baseline_y)
+		
 		_set_label_text_and_pos(g.label_idx, g.repr, g.pos)
 		g.stop_tween()
+		
 		var lbl := _label_pool[g.label_idx]
 		var t := create_tween().set_ease(t_ease).set_trans(t_trans)
 		t.tween_property(lbl, "position", target, zero_point_three)
+		
 		g.tween = t
 		g.target_pos = target
 		g.pos = target
+		_active_morph_tweens.append(t)
+		
+	if _active_morph_tweens.size() > 0:
+		_active_morph_tweens[-1].finished.connect(
+			_on_morph_complete,
+			CONNECT_ONE_SHOT
+		)
 
+
+##called when morphing animation completes
+func _on_morph_complete() -> void:
+	finished_morphing.emit()
 
 ##helper used to set label text and position immediately (used to seed animation start)
 func _set_label_text_and_pos(label_idx: int, ch: String, pos: Vector2) -> void:
@@ -255,23 +284,6 @@ func _set_label_text_and_pos(label_idx: int, ch: String, pos: Vector2) -> void:
 #endregion
 
 #region MEASUREMENT AND UTILS
-##measure glyph width accurately using the cached font if available.
-##fallback to minimum size if font is not cached.
-##DEPRECATED: kerning unaware. fucks shit up bad
-#func _measure_char_width(g: Glyph) -> float:
-	#if _font:
-		#print_rich("[color=green]Font cache found!")
-		#return _font.get_string_size(g.repr).x
-	##fallback code
-	#if _label_pool.size() > 0:
-		#var tmp := _label_pool[0]
-		#tmp.text = g.repr
-		##await get_tree().process_frame
-		#return tmp.get_minimum_size().x
-	##absolute fallback
-	#push_warning("No proper fallback found. Returning a const fallback 8.0.")
-	#return 8.0
-
 ##returns X positions for each glyph based on real kerning & shaping.
 ##index i gives the X at which character i should be placed.
 func _compute_glyph_positions_from_string(full_text: String) -> PackedFloat32Array:
@@ -296,6 +308,72 @@ func _compute_glyph_positions_from_string(full_text: String) -> PackedFloat32Arr
 	
 	return result
 
+func _compute_multiline_targets(text: String) -> Array[Vector2]:
+	var targets: Array[Vector2] = []
+	var limit := max_width if max_width > 0.0 else size.x
+	
+	#build lines first to calculate their widths for alignment
+	var lines: Array[Array] = []
+	var current_line: Array[Dictionary] = []
+	var line_x := 0.0
+	
+	for i in text.length():
+		var ch := text.substr(i, 1)
+		
+		if ch == "\n":
+			lines.append(current_line)
+			current_line = []
+			line_x = 0.0
+			continue
+		
+		var ch_width := _font.get_string_size(
+			ch,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1,
+			font_size
+		).x
+		
+		#check if I need to wrap (only if multiline is true)
+		if multiline and line_x + ch_width > limit and current_line.size() > 0:
+			lines.append(current_line)
+			current_line = []
+			line_x = 0.0
+		
+		#add character to current line with its position relative to line start
+		current_line.append({"char": ch, "width": ch_width, "x": line_x})
+		line_x += ch_width + letter_spacing
+	
+	#don't forget the last line
+	if current_line.size() > 0:
+		lines.append(current_line)
+	
+	#now layout each line with alignment
+	var cursor_y := 0.0
+	for line in lines:
+		if line.size() == 0:
+			cursor_y += _get_line_height() + line_spacing
+			continue
+		
+		#calculate actual line width (last char x + last char width)
+		var last_char: Dictionary = line[-1]
+		var line_width := last_char["x"] + last_char["width"] as float
+		
+		#apply alignment offset based on line width
+		var x_offset := 0.0
+		var align_width := limit if multiline else size.x
+		match alignment:
+			1: x_offset = (align_width - line_width) * 0.5
+			2: x_offset = align_width - line_width
+			_: x_offset = 0.0
+		
+		for char_data in line:
+			targets.append(Vector2(char_data["x"] + x_offset, cursor_y))
+		
+		cursor_y += _get_line_height() + line_spacing
+	
+	return targets
+
+
 ##obtain current label position (used when reusing a label index as fallback)
 func _get_label_pos(label_idx: int) -> Vector2:
 	return _label_pool[label_idx].position
@@ -310,6 +388,11 @@ func _immediately_destroy_all_glyphs() -> void:
 		lbl.modulate = Color.WHITE
 		_free_label_indices.push_back(g.label_idx)
 	_active_glyphs.clear()
+
+##fetches the line height (size.y)
+func _get_line_height() -> float:
+	if not _font: return font_size
+	return _font.get_height(font_size)
 #endregion
 
 #endregion
@@ -319,13 +402,16 @@ func immediately_set_text(string: String) -> void:
 	_immediately_destroy_all_glyphs()
 	for i in string.length():
 		var ch := string.substr(i, 1)
+		if ch == "\n": continue
 		var g := _spawn_glyph(ch)
 		_active_glyphs.append(g)
 	
 	#snap to layout
 	_relayout_immediately()
+	
+	finished_morphing.emit.call_deferred()
 
-##look man this shit does too much, i dont blame you if you don get it
+##morph (animate) the current string into the given text.
 func morph_into(new_text: String) -> void:
 	if not _active_glyphs: 
 		immediately_set_text(new_text)
@@ -354,7 +440,6 @@ func morph_into(new_text: String) -> void:
 			new_active.append(reused)
 		else:
 			var ng := _spawn_glyph(ch)
-			ng.pos.y += baseline_y
 			new_active.append(ng)
 	
 	#kill unused indices
@@ -365,4 +450,9 @@ func morph_into(new_text: String) -> void:
 			_destroy_glyph(old_glyph)
 	
 	_active_glyphs.assign(new_active)
-	_relayout_animated()
+	
+	#if no glyphs to animate, emit immediately
+	if _active_glyphs.size() == 0:
+		finished_morphing.emit.call_deferred()
+	else:
+		_relayout_animated()
